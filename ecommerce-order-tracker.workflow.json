@@ -1,0 +1,241 @@
+{
+  "name": "E-commerce Order Tracker (Gmail → Aggregate → AI → Sheets)",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+        "simple": false,
+        "maxResults": 20,
+        "filters": {
+          "q": "subject:(\"order confirmed\" OR \"order placed\" OR \"payment successful\")",
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "id": "8dc60cbf-2b5b-4a05-acb5-b5399cb52535",
+      "name": "Gmail Trigger - Order Emails",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 304],
+      "credentials": { "gmailOAuth2": { "id": "YOUR_GMAIL_CREDENTIAL_ID", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose", "version": 1 },
+          "conditions": [
+            { "id": "kw1", "leftValue": "={{ $json.subject }}", "operator": { "type": "string", "operation": "contains" }, "rightValue": "order confirmed" },
+            { "id": "kw2", "leftValue": "={{ $json.subject }}", "operator": { "type": "string", "operation": "contains" }, "rightValue": "order placed" },
+            { "id": "kw3", "leftValue": "={{ $json.subject }}", "operator": { "type": "string", "operation": "contains" }, "rightValue": "payment successful" },
+            { "id": "kw4", "leftValue": "={{ $json.subject }}", "operator": { "type": "string", "operation": "contains" }, "rightValue": "order is confirmed" }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": { "ignoreCase": true }
+      },
+      "id": "ba5790dd-dd46-47d9-8c20-e757e0874553",
+      "name": "Filter Order Keywords",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [480, 304]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "p1", "name": "emailId", "value": "={{ $json.id }}", "type": "string" },
+            { "id": "p2", "name": "subject", "value": "={{ $json.subject }}", "type": "string" },
+            { "id": "p3", "name": "from", "value": "={{ $json.from?.text ?? \"\" }}", "type": "string" },
+            { "id": "p4", "name": "receivedAt", "value": "={{ $json.date }}", "type": "string" },
+            { "id": "p5", "name": "body", "value": "={{ ($json.text || $json.textAsHtml || $json.snippet || \"\").slice(0, 4000) }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "947b555f-8047-4ff6-8aeb-0612264f4ed4",
+      "name": "Prepare Email for AI",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [720, 304]
+    },
+    {
+      "parameters": { "aggregate": "aggregateAllItemData", "destinationFieldName": "emails", "options": {} },
+      "id": "92f146f1-179b-4f52-8013-1f3470b51117",
+      "name": "Aggregate All Emails",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [960, 304]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here are {{ $json.emails.length }} order confirmation emails in one batch. Extract one order object per email.\n\nEMAILS (JSON):\n{{ JSON.stringify($json.emails, null, 2) }}",
+        "hasOutputParser": true,
+        "needsFallback": true,
+        "options": {
+          "systemMessage": "You are an e-commerce order extraction assistant. You receive a batch of order confirmation emails from different online stores. For EACH email, return exactly one object in the \"orders\" array with these fields:\n- email_id: copy the emailId from the input exactly\n- store: the store or brand name (e.g. Amazon, Flipkart, Myntra, Nykaa, Swiggy)\n- order_id: the order / reference number\n- items: list of item names purchased\n- amount: the total amount paid as a number only (no currency symbol, no commas)\n- currency: 3-letter ISO code (Rs, ₹ → INR; $ → USD; £ → GBP; € → EUR)\n- order_date: YYYY-MM-DD. If not stated, use the email receivedAt date\n- delivery_date: expected delivery date as YYYY-MM-DD. Only fill it if an exact date can be worked out (e.g. 'today' = the order date). If the year is missing assume the same year as the order date. Vague ranges like '3-5 days' = missing\n- category: exactly one of Electronics, Clothing, Groceries, Beauty, Books, Home, Food, Other. Food = restaurant / ready-to-eat orders; Groceries = supermarket items\n- reasoning: one short sentence on why you chose the category and which fields were missing\n\nRules: If a field cannot be found, leave that field out entirely (it is recorded as null). Never invent values. Do not merge emails. Do not skip emails."
+        }
+      },
+      "id": "9032b307-5654-4170-b023-de4cabb55ebb",
+      "name": "AI Order Extraction Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [1200, 304]
+    },
+    {
+      "parameters": { "modelName": "models/gemini-3.5-flash-lite", "options": { "maxOutputTokens": 8192, "temperature": 0.1 } },
+      "id": "656c461a-d668-453d-b039-f080c8253264",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [1152, 544],
+      "credentials": { "googlePalmApi": { "id": "YOUR_GEMINI_CREDENTIAL_ID", "name": "Google Gemini API" } }
+    },
+    {
+      "parameters": { "modelName": "models/gemini-2.5-flash-lite", "options": {} },
+      "id": "20ced2e1-22bb-4038-a5c8-b46225a046fa",
+      "name": "Google Gemini Chat Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [1248, 640],
+      "credentials": { "googlePalmApi": { "id": "YOUR_GEMINI_CREDENTIAL_ID", "name": "Google Gemini API" } }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"orders\": {\n      \"type\": \"array\",\n      \"description\": \"One entry per order email\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"email_id\": { \"type\": \"string\", \"description\": \"The emailId exactly as given in the input\" },\n          \"store\": { \"type\": \"string\", \"description\": \"Store or brand name. Omit if not found\" },\n          \"order_id\": { \"type\": \"string\", \"description\": \"Order or reference number. Omit if not found\" },\n          \"items\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Item names. Omit if not found\" },\n          \"amount\": { \"type\": \"number\", \"description\": \"Total paid as a plain number, no symbols or commas. Omit if not found\" },\n          \"currency\": { \"type\": \"string\", \"description\": \"3-letter ISO code e.g. INR, USD. Omit if not found\" },\n          \"order_date\": { \"type\": \"string\", \"description\": \"YYYY-MM-DD. Omit if not found\" },\n          \"delivery_date\": { \"type\": \"string\", \"description\": \"Expected delivery as YYYY-MM-DD. Omit if no exact date can be determined\" },\n          \"category\": { \"type\": \"string\", \"enum\": [\"Electronics\", \"Clothing\", \"Groceries\", \"Beauty\", \"Books\", \"Home\", \"Food\", \"Other\"] },\n          \"reasoning\": { \"type\": \"string\", \"description\": \"One short sentence explaining the category and naming any missing fields\" }\n        },\n        \"required\": [\"email_id\", \"category\", \"reasoning\"]\n      }\n    }\n  },\n  \"required\": [\"orders\"]\n}"
+      },
+      "id": "a76bf93b-228e-427f-bd7c-bf86435bd214",
+      "name": "Order Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [1344, 544]
+    },
+    {
+      "parameters": { "fieldToSplitOut": "output.orders", "options": {} },
+      "id": "2923bc8d-2313-486f-9ae4-28be3bb3fe80",
+      "name": "Split Into One Order Per Item",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [1472, 304]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "r1", "name": "Timestamp", "value": "={{ $now.setZone(\"Asia/Kolkata\").toFormat(\"yyyy-MM-dd HH:mm:ss\") }}", "type": "string" },
+            { "id": "r2", "name": "Email ID", "value": "={{ $json.email_id }}", "type": "string" },
+            { "id": "r3", "name": "Store", "value": "={{ $json.store ?? \"\" }}", "type": "string" },
+            { "id": "r4", "name": "Order ID", "value": "={{ $json.order_id ?? \"\" }}", "type": "string" },
+            { "id": "r5", "name": "Items", "value": "={{ ($json.items || []).join(\", \") }}", "type": "string" },
+            { "id": "r6", "name": "Amount", "value": "={{ $json.amount ?? \"\" }}", "type": "string" },
+            { "id": "r7", "name": "Currency", "value": "={{ $json.currency ?? \"\" }}", "type": "string" },
+            { "id": "r8", "name": "Order Date", "value": "={{ $json.order_date ?? \"\" }}", "type": "string" },
+            { "id": "r9", "name": "Delivery Date", "value": "={{ $json.delivery_date ?? \"\" }}", "type": "string" },
+            { "id": "r10", "name": "Category", "value": "={{ $json.category ?? \"Other\" }}", "type": "string" },
+            { "id": "r11", "name": "AI Reasoning", "value": "={{ $json.reasoning ?? \"\" }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "683904be-ea93-46e2-bc64-13c515700633",
+      "name": "Format Sheet Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1712, 304]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "YOUR_GOOGLE_SHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "gid=0", "cachedResultName": "Sheet1" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            { "id": "Timestamp", "displayName": "Timestamp", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Email ID", "displayName": "Email ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Store", "displayName": "Store", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Order ID", "displayName": "Order ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Items", "displayName": "Items", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Amount", "displayName": "Amount", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Currency", "displayName": "Currency", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Order Date", "displayName": "Order Date", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Delivery Date", "displayName": "Delivery Date", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "Category", "displayName": "Category", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "AI Reasoning", "displayName": "AI Reasoning", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "31ba961c-c352-497a-bc55-49a5fdab9ac5",
+      "name": "Log Order to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1952, 304],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": { "operation": "markAsRead", "messageId": "={{ $('Format Sheet Row').item.json['Email ID'] }}" },
+      "id": "c35ec883-c89e-4108-90bf-83dc4f72d258",
+      "name": "Mark Email as Read",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2192, 304],
+      "onError": "continueRegularOutput",
+      "credentials": { "gmailOAuth2": { "id": "YOUR_GMAIL_CREDENTIAL_ID", "name": "Gmail account" } }
+    },
+    {
+      "parameters": { "content": "## 1. Trigger & Filter\nGmail checks every minute for **unread** emails whose subject has \"order confirmed\", \"order placed\" or \"payment successful\". The Filter node double-checks the subject.", "height": 224, "width": 400, "color": 7 },
+      "id": "fafda799-e947-4cf8-bf3e-a1c3a2c3db7b",
+      "name": "Sticky Note b1d56e2b",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [96, 16]
+    },
+    {
+      "parameters": { "content": "## 2. Aggregate (key concept)\nInstead of calling the AI once per email, all emails from this run are bundled into ONE list (`emails`). 5 emails = 1 AI call instead of 5 → cheaper, faster, fewer rate-limit errors.", "height": 224, "width": 400, "color": 4 },
+      "id": "fe9f1da8-d6ff-4317-9cb7-b274405fdde4",
+      "name": "Sticky Note ab22f6dc",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [704, 16]
+    },
+    {
+      "parameters": { "content": "## 3. AI Extraction\nOne Gemini call reads the whole batch and returns an `orders` array, shaped by the Structured Output Parser. Missing fields come back as null.", "height": 224, "width": 288, "color": 6 },
+      "id": "0eb13b37-d5f8-4591-913c-b710835a8b0f",
+      "name": "Sticky Note 9b3d8c10",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1136, 32]
+    },
+    {
+      "parameters": { "content": "## 4. Log to Sheets\nSplit Out turns the orders array back into one item per order → one row each. Then the email is marked read so it is never logged twice.\n\n**Sheet headers (row 1):** Timestamp · Email ID · Store · Order ID · Items · Amount · Currency · Order Date · Delivery Date · Category · AI Reasoning", "height": 224, "width": 880, "color": 5 },
+      "id": "f53ec5f4-20b0-41f1-8a9b-37df77861c7e",
+      "name": "Sticky Note 2ec30949",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1440, 32]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger - Order Emails": { "main": [[{ "node": "Filter Order Keywords", "type": "main", "index": 0 }]] },
+    "Filter Order Keywords": { "main": [[{ "node": "Prepare Email for AI", "type": "main", "index": 0 }]] },
+    "Prepare Email for AI": { "main": [[{ "node": "Aggregate All Emails", "type": "main", "index": 0 }]] },
+    "Aggregate All Emails": { "main": [[{ "node": "AI Order Extraction Agent", "type": "main", "index": 0 }]] },
+    "AI Order Extraction Agent": { "main": [[{ "node": "Split Into One Order Per Item", "type": "main", "index": 0 }]] },
+    "Google Gemini Chat Model": { "ai_languageModel": [[{ "node": "AI Order Extraction Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Google Gemini Chat Model1": { "ai_languageModel": [[{ "node": "AI Order Extraction Agent", "type": "ai_languageModel", "index": 1 }]] },
+    "Order Output Parser": { "ai_outputParser": [[{ "node": "AI Order Extraction Agent", "type": "ai_outputParser", "index": 0 }]] },
+    "Split Into One Order Per Item": { "main": [[{ "node": "Format Sheet Row", "type": "main", "index": 0 }]] },
+    "Format Sheet Row": { "main": [[{ "node": "Log Order to Google Sheets", "type": "main", "index": 0 }]] },
+    "Log Order to Google Sheets": { "main": [[{ "node": "Mark Email as Read", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}
